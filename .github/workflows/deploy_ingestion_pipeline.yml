@@ -1,0 +1,53 @@
+name: Deploy Data Ingestion Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/pipelines/ingestion/**'
+      - 'dags/data_ingestion_dag.py'
+      - 'tests/pipelines/ingestion/**'
+
+jobs:
+  lint-and-unit-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run linter
+        run: flake8 src/pipelines/ingestion/ dags/data_ingestion_dag.py
+
+      - name: Run unit tests
+        run: pytest tests/pipelines/ingestion/
+
+  deploy-to-production:
+    needs: lint-and-unit-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Sync DAG to Production MWAA Bucket
+        run: |
+          aws s3 sync ./dags s3://${{ secrets.MWAA_PROD_DAGS_BUCKET }}/dags --delete
+          # In a real project, you would also sync your custom Python package
+          # aws s3 sync ./src s3://${{ secrets.MWAA_PROD_PLUGINS_BUCKET }}/src
