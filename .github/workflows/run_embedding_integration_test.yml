@@ -1,0 +1,82 @@
+name: Embedding Pipeline Integration Test
+
+on:
+  workflow_dispatch: # Allows manual trigger
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/pipelines/embedding/**'
+      - 'dags/embedding_generation_dag.py'
+
+jobs:
+  setup:
+    name: 1. Setup Staging Environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+      - name: Run setup script
+        env:
+          STAGING_S3_BUCKET: ${{ secrets.STAGING_S3_BUCKET }}
+          STAGING_DB_HOST: ${{ secrets.STAGING_DB_HOST }}
+          # ... other DB secrets
+        run: python tests/integration/setup_embedding_test.py
+
+  trigger-and-monitor-dag:
+    name: 2. Trigger and Monitor Airflow DAG
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install requests
+        run: pip install requests
+      - name: Trigger and wait for DAG run
+        env:
+          AIRFLOW_HOST: ${{ secrets.STAGING_AIRFLOW_HOST }}
+          AIRFLOW_USERNAME: ${{ secrets.STAGING_AIRFLOW_USERNAME }}
+          AIRFLOW_PASSWORD: ${{ secrets.STAGING_AIRFLOW_PASSWORD }}
+        # Assume a helper script to trigger and poll the Airflow API
+        run: python scripts/trigger_airflow_dag.py --dag-id embedding_generation --execution-date "2025-01-01T00:00:00+00:00"
+
+  verify:
+    name: 3. Verify Results in Database
+    needs: trigger-and-monitor-dag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+      - name: Run verification script
+        env:
+          STAGING_DB_HOST: ${{ secrets.STAGING_DB_HOST }}
+          # ... other DB secrets
+        run: pytest tests/integration/test_embedding_pipeline.py

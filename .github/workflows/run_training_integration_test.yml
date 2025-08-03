@@ -1,0 +1,72 @@
+name: Training Pipeline Integration Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/pipelines/training/**'
+      - 'dags/llm_finetuning_dag.py'
+
+jobs:
+  setup:
+    name: 1. Setup Staging Test Data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.STAGING_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.STAGING_AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+      - name: Run setup script to upload test data
+        env:
+          STAGING_S3_BUCKET: ${{ secrets.STAGING_S3_BUCKET }}
+        run: python tests/integration/setup_training_test.py
+
+  trigger-and-monitor-dag:
+    name: 2. Trigger and Monitor Airflow DAG
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install requests
+        run: pip install requests
+      - name: Trigger and wait for DAG run
+        env:
+          AIRFLOW_HOST: ${{ secrets.STAGING_AIRFLOW_HOST }}
+          AIRFLOW_USERNAME: ${{ secrets.STAGING_AIRFLOW_USERNAME }}
+          AIRFLOW_PASSWORD: ${{ secrets.STAGING_AIRFLOW_PASSWORD }}
+        # This script needs to be robust, polling the Airflow API until the DAG run completes (succeeds or fails)
+        # We also pass a special config to the DAG to set max_steps for the training job.
+        run: >
+          python scripts/trigger_airflow_dag.py 
+          --dag-id llm_continuous_training 
+          --execution-date "2025-01-01"
+          --conf '{"max_steps": 2}'
+
+  verify:
+    name: 3. Verify Model Registration in MLflow
+    needs: trigger-and-monitor-dag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run verification script
+        env:
+          STAGING_MLFLOW_TRACKING_URI: ${{ secrets.STAGING_MLFLOW_TRACKING_URI }}
+        run: pytest tests/integration/test_training_pipeline.py

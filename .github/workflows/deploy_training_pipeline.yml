@@ -1,0 +1,51 @@
+name: Deploy LLM Fine-tuning Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/pipelines/training/**'
+      - 'dags/llm_finetuning_dag.py'
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+      - name: Install dependencies & Run unit tests
+        run: |
+          pip install -r requirements-dev.txt
+          pytest tests/pipelines/training/
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and push training container to ECR
+        run: |
+          docker build -t ${{ secrets.ECR_REGISTRY }}/llm-finetuning-image:latest -f src/pipelines/training/Dockerfile .
+          docker push ${{ secrets.ECR_REGISTRY }}/llm-finetuning-image:latest
+
+  deploy:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Configure AWS Credentials
+        # ... credentials setup
+      - name: Run Integration Test (placeholder)
+        run: echo "Triggering and monitoring integration test..." # This would call the test script
+      - name: Sync DAG to Production MWAA Bucket
+        if: success()
+        run: aws s3 sync ./dags s3://${{ secrets.MWAA_PROD_DAGS_BUCKET }}/dags --delete
