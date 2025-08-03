@@ -1,0 +1,45 @@
+name: Deploy Monitoring System
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/monitoring/**'
+      - 'dags/model_quality_monitoring_dag.py'
+      - 'infra/monitoring.tf'
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+      - name: Install dependencies and run unit tests
+        run: |
+          pip install -r requirements-dev.txt
+          pytest tests/monitoring/
+      # ... steps to build and push the quality-monitor docker image to ECR
+
+  deploy-infra:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v2
+      - name: Configure AWS Credentials
+        # ...
+      - name: Terraform Apply for Monitoring
+        run: |
+          terraform -chdir=infra init
+          terraform -chdir=infra apply -auto-approve -target=aws_sns_topic.alerts_topic -target=aws_cloudwatch_metric_alarm.faithfulness_alarm -target=aws_cloudwatch_dashboard.summarizer_dashboard
+
+  deploy-dag:
+    needs: deploy-infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Configure AWS Credentials
+        # ...
+      - name: Sync Monitoring DAG to Production
+        run: aws s3 sync ./dags s3://${{ secrets.MWAA_PROD_DAGS_BUCKET }}/dags --delete

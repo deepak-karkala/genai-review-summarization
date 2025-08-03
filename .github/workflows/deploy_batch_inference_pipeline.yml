@@ -1,0 +1,39 @@
+name: Deploy Batch Inference Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/pipelines/inference/**'
+      - 'dags/batch_inference_dag.py'
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: pytest tests/pipelines/inference/
+      
+      # Integration Test Steps
+      - name: Configure AWS Staging Credentials
+        # ...
+      - name: Run Integration Test Setup
+        # ... (calls setup_inference_test.py)
+      - name: Trigger Staging DAG Run
+        # ... (calls scripts/trigger_airflow_dag.py)
+      - name: Run Integration Test Verification
+        # ... (calls pytest tests/integration/test_inference_pipeline.py)
+      
+      # Deploy to Production
+      - name: Configure AWS Production Credentials
+        if: success()
+        # ...
+      - name: Sync DAG to Production MWAA Bucket
+        if: success()
+        run: aws s3 sync ./dags s3://${{ secrets.MWAA_PROD_DAGS_BUCKET }}/dags --delete
